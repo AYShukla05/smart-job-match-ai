@@ -1,0 +1,5 @@
+spacy
+sentence-transformers
+pandas
+openai
+argparse
