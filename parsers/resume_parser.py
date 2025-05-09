@@ -15,16 +15,61 @@ import fitz  # PyMuPDF
 import docx
 import re
 import pytesseract
+from PIL import Image
 
 # Set the path to the tesseract.exe inside your repo folder
 pytesseract.pytesseract.tesseract_cmd = r'E:\AI&DS\SmartJobMatchAI\smart-job-match-ai-main\tesseract\tesseract.exe'
 
+# Dictionary of common OCR-specific corrections (whole words only)
+OCR_CORRECTIONS = {
+    "Gexanple": "example",
+    "exanple": "example",
+    "Gmail. com": "gmail.com",
+    "linkedin. con": "linkedin.com",
+    "github. con": "github.com",
+    "dot com": ".com"
+}
+
+def clean_ocr_text(raw_text):
+    text = re.sub(r'\s+', ' ', raw_text)
+    text = re.sub(r'[“”]', '"', text)
+    text = re.sub(r"[‘’]", "'", text)
+    text = text.strip()
+
+    corrections_applied = []
+    for wrong, right in OCR_CORRECTIONS.items():
+        pattern = r'\b' + re.escape(wrong) + r'\b'
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            corrections_applied.append((wrong, right))
+            text = re.sub(pattern, right, text, flags=re.IGNORECASE)
+
+    if corrections_applied:
+        print("Applied OCR corrections:", corrections_applied)
+
+    return text
+
+
 def extract_text_from_pdf(file_path):
     text = ""
+    ocr_text = ""
     with fitz.open(file_path) as pdf:
         for page in pdf:
-            text += page.get_text()
-    return text
+            # Extract embedded text
+            page_text = page.get_text()
+            text += page_text
+
+            # If the embedded text is missing or suspiciously short, fallback to OCR
+            if not page_text.strip() or len(page_text.strip()) < 30:
+                pix = page.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                ocr_text += pytesseract.image_to_string(img)
+
+    # Combine both: prefer embedded text + supplement with OCR where needed
+    combined_text = text + "\n" + ocr_text
+    
+    # Clean the text before parsing
+    cleaned_text = clean_ocr_text(combined_text)
+    return cleaned_text
 
 
 def extract_text_from_docx(file_path):
@@ -153,7 +198,7 @@ def parse_resume(file_path):
 
 
 if __name__ == "__main__":
-    test_file = "sample_resume.pdf"  # Replace with your test file path
+    test_file = "DetailedResumeSample1.pdf"  # Replace with your test file path
     parsed_data = parse_resume(test_file)
     print("Parsed Resume Data:")
     for key, value in parsed_data.items():

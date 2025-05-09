@@ -55,3 +55,12 @@ __pycache__/
 !.docs/
 !.data/
 .DS_Store
+
+
+# Ignore PDFs
+*.pdf
+
+# Ignore assets
+assets
+
+settings.json
