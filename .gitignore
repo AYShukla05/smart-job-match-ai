@@ -5,7 +5,7 @@ __pycache__/
 *.pyo
 
 # Virtual environments
-venv/
+.venv/
 smart_job_ai/
 .env/
 lib/
