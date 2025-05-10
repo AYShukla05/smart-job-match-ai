@@ -1,205 +1,125 @@
 """
-Improved Resume Parser Script
------------------------------
-Extracts structured data from resumes:
-- Email, phone, skills
-- Education (with degree + institution)
-- Certifications (no section headers)
-- Experience (role + bullets)
-- Projects (only under Projects section)
-- Publications (only under Publications section)
-- References
+resume_parser.py
+
+A simple, modular resume parser for PDF and DOCX files.  
+Uses PyMuPDF for PDFs and python-docx for Word documents,  
+then applies text cleaning and section-based extraction  
+to pull out name, contact info, education, skills, experience, projects, and publications.
 """
 
-import fitz  # PyMuPDF
-import docx
-import re
-import pytesseract
-from PIL import Image
+import fitz    # PyMuPDF
+import docx    # python-docx
 
-# Set the path to the tesseract.exe inside your repo folder
-pytesseract.pytesseract.tesseract_cmd = r'E:\AI&DS\SmartJobMatchAI\smart-job-match-ai-main\tesseract\tesseract.exe'
-
-# Dictionary of common OCR-specific corrections (whole words only)
-OCR_CORRECTIONS = {
-    "Gexanple": "example",
-    "exanple": "example",
-    "Gmail. com": "gmail.com",
-    "linkedin. con": "linkedin.com",
-    "github. con": "github.com",
-    "dot com": ".com"
-}
-
-def clean_ocr_text(raw_text):
-    text = re.sub(r'\s+', ' ', raw_text)
-    text = re.sub(r'[“”]', '"', text)
-    text = re.sub(r"[‘’]", "'", text)
-    text = text.strip()
-
-    corrections_applied = []
-    for wrong, right in OCR_CORRECTIONS.items():
-        pattern = r'\b' + re.escape(wrong) + r'\b'
-        if re.search(pattern, text, flags=re.IGNORECASE):
-            corrections_applied.append((wrong, right))
-            text = re.sub(pattern, right, text, flags=re.IGNORECASE)
-
-    if corrections_applied:
-        print("Applied OCR corrections:", corrections_applied)
-
-    return text
+from utils import (
+    clean_text,
+    extract_name,
+    extract_email,
+    extract_phone,
+    extract_sections_by_headings,
+    parse_education,
+    parse_skills,
+    parse_experience,
+    parse_projects,
+    parse_publications
+)
 
 
-def extract_text_from_pdf(file_path):
-    text = ""
-    ocr_text = ""
-    with fitz.open(file_path) as pdf:
-        for page in pdf:
-            # Extract embedded text
-            page_text = page.get_text()
-            text += page_text
-
-            # If the embedded text is missing or suspiciously short, fallback to OCR
-            if not page_text.strip() or len(page_text.strip()) < 30:
-                pix = page.get_pixmap()
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                ocr_text += pytesseract.image_to_string(img)
-
-    # Combine both: prefer embedded text + supplement with OCR where needed
-    combined_text = text + "\n" + ocr_text
+def extract_text_from_pdf(path):
+    """
+    Read and extract all text from each page of a PDF file.
     
-    # Clean the text before parsing
-    cleaned_text = clean_ocr_text(combined_text)
-    return cleaned_text
-
-
-def extract_text_from_docx(file_path):
-    doc = docx.Document(file_path)
-    text = ""
-    for para in doc.paragraphs:
-        text += para.text + "\n"
-    return text
-
-
-def extract_email(text):
-    match = re.search(r'[\w\.-]+@[\w\.-]+', text)
-    return match.group(0) if match else None
-
-
-def extract_phone(text):
-    match = re.search(r'\+?\d[\d -]{8,}\d', text)
-    return match.group(0) if match else None
-
-
-def extract_skills(text, skills_list):
-    return [skill for skill in skills_list if skill.lower() in text.lower()]
-
-
-def extract_education(text):
-    lines = text.split('\n')
-    education = []
-    for line in lines:
-        if re.search(r'(Bachelor|Master|PhD|B\.Sc|M\.Sc|B\.Tech|M\.Tech).*?,', line, re.IGNORECASE):
-            education.append(line.strip())
-    return education
-
-
-def extract_section_block(text, section_title):
+    Args:
+        path (str): filesystem path to the .pdf file.
+    
+    Returns:
+        str: concatenated text of all pages, separated by newlines.
     """
-    Extract lines under a specific section until the next section or empty line.
+    text = []
+    with fitz.open(path) as pdf:
+        for page in pdf:
+            # get_text() returns the page’s text content
+            text.append(page.get_text())
+    return "\n".join(text)
+
+
+def extract_text_from_docx(path):
     """
-    lines = text.split('\n')
-    block = []
-    capture = False
-    for line in lines:
-        if section_title.lower() in line.lower():
-            capture = True
-            continue
-        if capture:
-            if line.strip() == '' or re.match(r'^[A-Za-z ]+:$', line.strip()):  # Next section header
-                break
-            block.append(line.strip())
-    return block
+    Read and extract all text from a .docx Word document.
+    
+    Args:
+        path (str): filesystem path to the .docx file.
+    
+    Returns:
+        str: concatenated text of all paragraphs, separated by newlines.
+    """
+    doc = docx.Document(path)
+    paragraphs = [para.text for para in doc.paragraphs]
+    return "\n".join(paragraphs)
 
 
-def extract_certifications(text):
-    return extract_section_block(text, 'Certifications')
-
-
-def extract_experience(text):
-    lines = text.split('\n')
-    experience = []
-    capture = False
-    for line in lines:
-        # Only start capturing when hitting exact section header 'Experience:'
-        if line.strip().lower() == 'experience:':
-            capture = True
-            continue
-        if capture:
-            # Stop at next section header (line ending with ':') or blank line
-            if line.strip() == '' or re.match(r'^[A-Za-z ]+:$', line.strip()):
-                break
-            # Capture non-empty lines
-            if line.strip():
-                experience.append(line.strip())
-    return experience
-
-
-def extract_projects(text):
-    return extract_section_block(text, 'Projects')
-
-
-def extract_publications(text):
-    return extract_section_block(text, 'Publications')
-
-
-def extract_references(text):
-    if 'References' in text:
-        return ['Available upon request']
-    return []
-
-
-def parse_resume(file_path):
-    skills_list = ['Python', 'Java', 'Machine Learning', 'Data Analysis', 'SQL',
-                   'Pandas', 'NumPy', 'Scikit-learn', 'Flask']
-
-    # Extract raw text
-    if file_path.endswith('.pdf'):
-        text = extract_text_from_pdf(file_path)
-    elif file_path.endswith('.docx'):
-        text = extract_text_from_docx(file_path)
+def parse_resume(path):
+    """
+    Orchestrate the full resume parsing pipeline:
+      1) Read raw embedded text from PDF or DOCX.
+      2) Clean up whitespace and punctuation.
+      3) Extract top‐level fields (name, email, phone).
+      4) Split text into logical sections by heading keywords.
+      5) Post‐process each section into structured lists or dicts.
+    
+    Args:
+        path (str): filesystem path to the resume file (.pdf or .docx).
+    
+    Returns:
+        dict: parsed fields with keys:
+            - name (str or None)
+            - email (str or None)
+            - phone (str or None)
+            - education (List[str])
+            - skills (List[str])
+            - experience (List[dict])
+            - projects (List[str])
+            - publications (List[str])
+    """
+    # 1) Load raw text from the appropriate file type
+    if path.lower().endswith('.pdf'):
+        raw_text = extract_text_from_pdf(path)
+    elif path.lower().endswith('.docx'):
+        raw_text = extract_text_from_docx(path)
     else:
-        raise ValueError("Unsupported file type")
+        raise ValueError("Unsupported format: only .pdf and .docx are accepted")
 
-    print("Extracted Text:", text)  # Debugging line to check extracted text
-    # Extract fields
-    email = extract_email(text)
-    phone = extract_phone(text)
-    skills = extract_skills(text, skills_list)
-    education = extract_education(text)
-    certifications = extract_certifications(text)
-    experience = extract_experience(text)
-    projects = extract_projects(text)
-    publications = extract_publications(text)
-    references = extract_references(text)
+    # 2) Normalize spacing, remove smart quotes, unify line breaks
+    cleaned = clean_text(raw_text)
 
-    result = {
-        "email": email,
-        "phone": phone,
-        "skills": skills,
-        "education": education,
-        "certifications": certifications,
-        "experience": experience,
-        "projects": projects,
-        "publications": publications,
-        "references": references
+    # 3) Extract contact and identity fields
+    name  = extract_name(cleaned)
+    email = extract_email(cleaned)
+    phone = extract_phone(cleaned)
+
+    # 4) Break the document into named sections
+    sections = extract_sections_by_headings(cleaned)
+
+    # 5) Parse each section into the desired structure
+    education    = parse_education(sections.get('education', []))
+    skills       = parse_skills(sections.get('skills', []))
+    experience   = parse_experience(sections.get('experience', []))
+    projects     = parse_projects(sections.get('projects', []))
+    publications = parse_publications(sections.get('publications', []))
+
+    # 6) Assemble the final result
+    return {
+        'name':         name,
+        'email':        email,
+        'phone':        phone,
+        'education':    education,
+        'skills':       skills,
+        'experience':   experience,
+        'projects':     projects,
+        'publications': publications
     }
 
-    return result
 
-
-if __name__ == "__main__":
-    test_file = "DetailedResumeSample1.pdf"  # Replace with your test file path
-    parsed_data = parse_resume(test_file)
-    print("Parsed Resume Data:")
-    for key, value in parsed_data.items():
-        print(f"{key.capitalize()}: {value}")
+if __name__ == '__main__':
+    import json
+    result = parse_resume('sample_resume_multi.pdf')
+    print(json.dumps(result, indent=2))
